@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Frontend Hosting for MLOps Platform using AWS Amplify'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: mlops-platform
+  
+  Environment:
+    Type: String
+    Default: dev
+  
+  GitHubRepo:
+    Type: String
+    Description: 'GitHub repository (format: owner/repo)'
+    Default: 'your-org/mlops-platform'
+  
+  GitHubBranch:
+    Type: String
+    Description: 'GitHub branch to deploy'
+    Default: 'main'
+  
+  GitHubToken:
+    Type: String
+    Description: 'GitHub personal access token'
+    NoEcho: true
+  
+  ApiEndpoint:
+    Type: String
+    Description: 'API Gateway endpoint URL'
+
+Resources:
+  # AWS Amplify App for React Frontend
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Sub '${ProjectName}-frontend-${Environment}'
+      Description: 'MLOps Platform React Frontend'
+      Repository: !Sub 'https://github.com/${GitHubRepo}'
+      AccessToken: !Ref GitHubToken
+      BuildSpec: |
+        version: 1
+        frontend:
+          phases:
+            preBuild:
+              commands:
+                - cd frontend
+                - npm ci
+            build:
+              commands:
+                - echo "REACT_APP_API_URL=$API_ENDPOINT" > .env
+                - npm run build
+          artifacts:
+            baseDirectory: frontend/build
+            files:
+              - '**/*'
+          cache:
+            paths:
+              - frontend/node_modules/**/*
+      EnvironmentVariables:
+        - Name: API_ENDPOINT
+          Value: !Ref ApiEndpoint
+        - Name: _LIVE_UPDATES
+          Value: '[{"name":"Node.js version","pkg":"node","type":"nvm","version":"18"}]'
+      IAMServiceRole: !GetAtt AmplifyRole.Arn
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Amplify Branch (connects to GitHub branch)
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      BranchName: !Ref GitHubBranch
+      EnableAutoBuild: true
+      EnablePullRequestPreview: true
+      Stage: !If [IsProduction, PRODUCTION, DEVELOPMENT]
+      EnvironmentVariables:
+        - Name: REACT_APP_API_URL
+          Value: !Ref ApiEndpoint
+
+  # IAM Role for Amplify
+  AmplifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-amplify-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: amplify.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AdministratorAccess-Amplify'
+
+  # Custom Domain (Optional)
+  # AmplifyDomain:
+  #   Type: AWS::Amplify::Domain
+  #   Properties:
+  #     AppId: !GetAtt AmplifyApp.AppId
+  #     DomainName: 'your-domain.com'
+  #     SubDomainSettings:
+  #       - Prefix: !Ref Environment
+  #         BranchName: !Ref GitHubBranch
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, 'prod']
+
+Outputs:
+  AmplifyAppId:
+    Description: 'Amplify App ID'
+    Value: !GetAtt AmplifyApp.AppId
+    Export:
+      Name: !Sub '${ProjectName}-amplify-app-id-${Environment}'
+  
+  AmplifyDefaultDomain:
+    Description: 'Amplify default domain'
+    Value: !Sub 'https://${GitHubBranch}.${AmplifyApp.DefaultDomain}'
+    Export:
+      Name: !Sub '${ProjectName}-amplify-domain-${Environment}'
+  
+  AmplifyAppUrl:
+    Description: 'Amplify app URL'
+    Value: !Sub 'https://console.aws.amazon.com/amplify/home?region=${AWS::Region}#/${AmplifyApp.AppId}'

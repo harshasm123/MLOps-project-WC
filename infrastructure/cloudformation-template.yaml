@@ -1,0 +1,348 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'MLOps Platform - Medication Adherence Prediction System'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: mlops-platform
+    Description: Name of the project
+  
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+  
+  DatasetBucketName:
+    Type: String
+    Description: Name of the S3 bucket for storing datasets (must be globally unique)
+
+Resources:
+  # S3 Buckets
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref DatasetBucketName
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  ModelBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-models-${Environment}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # DynamoDB Table for Model Registry
+  ModelsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-models-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: version
+          AttributeType: S
+        - AttributeName: modelGroup
+          AttributeType: S
+      KeySchema:
+        - AttributeName: version
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: ModelGroupIndex
+          KeySchema:
+            - AttributeName: modelGroup
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # IAM Role for SageMaker
+  SageMakerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-sagemaker-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSageMakerFullAccess'
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:DeleteObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt DataBucket.Arn
+                  - !Sub '${DataBucket.Arn}/*'
+                  - !GetAtt ModelBucket.Arn
+                  - !Sub '${ModelBucket.Arn}/*'
+
+  # IAM Role for Lambda Functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-lambda-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: SageMakerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sagemaker:CreateTrainingJob'
+                  - 'sagemaker:DescribeTrainingJob'
+                  - 'sagemaker:ListEndpoints'
+                  - 'sagemaker:InvokeEndpoint'
+                  - 'sagemaker:CreateModel'
+                  - 'sagemaker:CreateEndpoint'
+                Resource: '*'
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt DataBucket.Arn
+                  - !Sub '${DataBucket.Arn}/*'
+                  - !GetAtt ModelBucket.Arn
+                  - !Sub '${ModelBucket.Arn}/*'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:UpdateItem'
+                  - 'dynamodb:Scan'
+                  - 'dynamodb:Query'
+                Resource: !GetAtt ModelsTable.Arn
+        - PolicyName: PassRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'iam:PassRole'
+                Resource: !GetAtt SageMakerExecutionRole.Arn
+
+  # Lambda Functions
+  TrainingHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-training-handler-${Environment}'
+      Runtime: python3.11
+      Handler: training_handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          SAGEMAKER_ROLE_ARN: !GetAtt SageMakerExecutionRole.Arn
+          MODEL_BUCKET: !Ref ModelBucket
+          DATA_BUCKET: !Ref DataBucket
+      Code:
+        ZipFile: |
+          # Placeholder - deploy actual code from backend/lambda/training_handler.py
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Training handler'}
+
+  InferenceHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-inference-handler-${Environment}'
+      Runtime: python3.11
+      Handler: inference_handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          MODEL_BUCKET: !Ref ModelBucket
+          DATA_BUCKET: !Ref DataBucket
+      Code:
+        ZipFile: |
+          # Placeholder - deploy actual code from backend/lambda/inference_handler.py
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Inference handler'}
+
+  ModelRegistryHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-model-registry-handler-${Environment}'
+      Runtime: python3.11
+      Handler: model_registry_handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          MODELS_TABLE: !Ref ModelsTable
+      Code:
+        ZipFile: |
+          # Placeholder - deploy actual code from backend/lambda/model_registry_handler.py
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Model registry handler'}
+
+  # API Gateway
+  ApiGateway:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ProjectName}-api-${Environment}'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - '*'
+
+  ApiGatewayStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ApiGateway
+      StageName: prod
+      AutoDeploy: true
+
+  # Lambda Integrations
+  TrainingIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt TrainingHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  InferenceIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt InferenceHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  ModelRegistryIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ModelRegistryHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  # API Routes
+  TrainingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /training/start'
+      Target: !Sub 'integrations/${TrainingIntegration}'
+
+  InferenceRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /inference/predict'
+      Target: !Sub 'integrations/${InferenceIntegration}'
+
+  ModelsListRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /models'
+      Target: !Sub 'integrations/${ModelRegistryIntegration}'
+
+  # Lambda Permissions
+  TrainingLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TrainingHandlerFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
+
+  InferenceLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref InferenceHandlerFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
+
+  ModelRegistryLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ModelRegistryHandlerFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${ProjectName}-api-endpoint-${Environment}'
+
+  DataBucketName:
+    Description: S3 bucket for data storage
+    Value: !Ref DataBucket
+
+  ModelBucketName:
+    Description: S3 bucket for model storage
+    Value: !Ref ModelBucket
+
+  SageMakerRoleArn:
+    Description: IAM role ARN for SageMaker
+    Value: !GetAtt SageMakerExecutionRole.Arn

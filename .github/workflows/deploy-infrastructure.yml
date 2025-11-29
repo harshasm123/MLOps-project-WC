@@ -1,0 +1,112 @@
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infrastructure/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy-infrastructure:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Set environment
+        id: set-env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Validate CloudFormation templates
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infrastructure/cloudformation-template.yaml
+          
+          aws cloudformation validate-template \
+            --template-body file://infrastructure/cicd-pipeline.yaml
+          
+          aws cloudformation validate-template \
+            --template-body file://infrastructure/data-pipeline.yaml
+      
+      - name: Deploy main infrastructure
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/cloudformation-template.yaml \
+            --stack-name mlops-platform-${{ steps.set-env.outputs.environment }} \
+            --parameter-overrides Environment=${{ steps.set-env.outputs.environment }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+      
+      - name: Deploy CI/CD pipeline
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/cicd-pipeline.yaml \
+            --stack-name mlops-cicd-${{ steps.set-env.outputs.environment }} \
+            --parameter-overrides \
+              Environment=${{ steps.set-env.outputs.environment }} \
+              GitHubRepo=${{ github.repository }} \
+              GitHubBranch=main \
+              GitHubToken=${{ secrets.GITHUB_TOKEN }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+      
+      - name: Get Data Bucket
+        id: get-bucket
+        run: |
+          DATA_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name mlops-platform-${{ steps.set-env.outputs.environment }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`DataBucketName`].OutputValue' \
+            --output text)
+          echo "data_bucket=$DATA_BUCKET" >> $GITHUB_OUTPUT
+      
+      - name: Deploy data pipeline
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/data-pipeline.yaml \
+            --stack-name mlops-data-pipeline-${{ steps.set-env.outputs.environment }} \
+            --parameter-overrides \
+              Environment=${{ steps.set-env.outputs.environment }} \
+              DataBucket=${{ steps.get-bucket.outputs.data_bucket }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+      
+      - name: Get stack outputs
+        run: |
+          echo "=== Deployment Complete ==="
+          echo "Environment: ${{ steps.set-env.outputs.environment }}"
+          echo ""
+          echo "API Endpoint:"
+          aws cloudformation describe-stacks \
+            --stack-name mlops-platform-${{ steps.set-env.outputs.environment }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text
+          echo ""
+          echo "Data Bucket:"
+          echo "${{ steps.get-bucket.outputs.data_bucket }}"

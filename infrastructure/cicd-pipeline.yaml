@@ -1,0 +1,382 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GitOps CI/CD Pipeline for MLOps Platform - GitHub, CodePipeline, CodeBuild, ArgoCD'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: mlops-platform
+  
+  Environment:
+    Type: String
+    Default: dev
+  
+  GitHubRepo:
+    Type: String
+    Description: 'GitHub repository (format: owner/repo)'
+    Default: 'your-org/mlops-platform'
+  
+  GitHubBranch:
+    Type: String
+    Description: 'GitHub branch to track'
+    Default: 'main'
+  
+  GitHubToken:
+    Type: String
+    Description: 'GitHub personal access token (stored in Secrets Manager)'
+    NoEcho: true
+
+Resources:
+  # Store GitHub token in Secrets Manager
+  GitHubTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${ProjectName}-github-token-${Environment}'
+      Description: 'GitHub personal access token for CI/CD'
+      SecretString: !Ref GitHubToken
+
+  # S3 Bucket for Pipeline Artifacts
+  PipelineArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-pipeline-artifacts-${Environment}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # IAM Role for CodeBuild
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-codebuild-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSCodeBuildAdminAccess'
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                Resource:
+                  - !Sub '${PipelineArtifactsBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - 'lambda:UpdateFunctionCode'
+                  - 'lambda:GetFunction'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'sagemaker:CreateTrainingJob'
+                  - 'sagemaker:DescribeTrainingJob'
+                Resource: '*'
+
+  # IAM Role for CodePipeline
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-codepipeline-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: CodePipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'secretsmanager:GetSecretValue'
+                Resource:
+                  - !Ref GitHubTokenSecret
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:GetBucketLocation'
+                Resource:
+                  - !GetAtt PipelineArtifactsBucket.Arn
+                  - !Sub '${PipelineArtifactsBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - 'codebuild:BatchGetBuilds'
+                  - 'codebuild:StartBuild'
+                Resource:
+                  - !GetAtt MLCodeBuildProject.Arn
+                  - !GetAtt TestBuildProject.Arn
+                  - !GetAtt DeployBuildProject.Arn
+
+  # CodeBuild Project for ML Code
+  MLCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${ProjectName}-ml-code-build-${Environment}'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: !Ref Environment
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                python: 3.11
+              commands:
+                - pip install -r requirements.txt
+            build:
+              commands:
+                - echo "Building ML code..."
+                - python -m py_compile src/**/*.py
+                - echo "Packaging Lambda functions..."
+                - cd backend/lambda
+                - zip -r training_handler.zip training_handler.py
+                - zip -r inference_handler.zip inference_handler.py
+                - zip -r model_registry_handler.zip model_registry_handler.py
+          artifacts:
+            files:
+              - backend/lambda/*.zip
+              - src/**/*
+              - requirements.txt
+
+  # CodeBuild Project for Testing
+  TestBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${ProjectName}-test-build-${Environment}'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                python: 3.11
+              commands:
+                - pip install -r requirements.txt
+                - pip install pytest pytest-cov hypothesis
+            build:
+              commands:
+                - echo "Running tests..."
+                - pytest tests/ -v --cov=src --cov-report=term
+                - echo "Running property-based tests..."
+                - pytest tests/ -m property -v
+          reports:
+            test-results:
+              files:
+                - 'test-results.xml'
+              file-format: 'JUNITXML'
+
+  # CodeBuild Project for Deployment
+  DeployBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${ProjectName}-deploy-build-${Environment}'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: !Ref Environment
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                python: 3.11
+            build:
+              commands:
+                - echo "Deploying Lambda functions..."
+                - aws lambda update-function-code --function-name mlops-platform-training-handler-${ENVIRONMENT} --zip-file fileb://backend/lambda/training_handler.zip
+                - aws lambda update-function-code --function-name mlops-platform-inference-handler-${ENVIRONMENT} --zip-file fileb://backend/lambda/inference_handler.zip
+                - aws lambda update-function-code --function-name mlops-platform-model-registry-handler-${ENVIRONMENT} --zip-file fileb://backend/lambda/model_registry_handler.zip
+                - echo "Deployment complete!"
+
+  # CodePipeline for ML Code (GitHub Source)
+  MLCodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub '${ProjectName}-ml-pipeline-${Environment}'
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref PipelineArtifactsBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: GitHubSource
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: '1'
+              Configuration:
+                Owner: !Select [0, !Split ['/', !Ref GitHubRepo]]
+                Repo: !Select [1, !Split ['/', !Ref GitHubRepo]]
+                Branch: !Ref GitHubBranch
+                OAuthToken: !Sub '{{resolve:secretsmanager:${GitHubTokenSecret}:SecretString}}'
+                PollForSourceChanges: false
+              OutputArtifacts:
+                - Name: SourceOutput
+        
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref MLCodeBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+        
+        - Name: Test
+          Actions:
+            - Name: TestAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref TestBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+        
+        - Name: Deploy
+          Actions:
+            - Name: DeployAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref DeployBuildProject
+              InputArtifacts:
+                - Name: BuildOutput
+
+  # GitHub Webhook for Pipeline Trigger
+  GitHubWebhook:
+    Type: AWS::CodePipeline::Webhook
+    Properties:
+      Name: !Sub '${ProjectName}-github-webhook-${Environment}'
+      Authentication: GITHUB_HMAC
+      AuthenticationConfiguration:
+        SecretToken: !Sub '{{resolve:secretsmanager:${GitHubTokenSecret}:SecretString}}'
+      Filters:
+        - JsonPath: '$.ref'
+          MatchEquals: !Sub 'refs/heads/${GitHubBranch}'
+      TargetPipeline: !Ref MLCodePipeline
+      TargetAction: GitHubSource
+      TargetPipelineVersion: !GetAtt MLCodePipeline.Version
+      RegisterWithThirdParty: true
+
+  # ArgoCD for GitOps (Optional - for Kubernetes deployments)
+  ArgoCDNamespace:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt ArgoCDSetupFunction.Arn
+
+  ArgoCDSetupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-argocd-setup-${Environment}'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt ArgoCDSetupRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              # Placeholder for ArgoCD setup
+              # In production, this would configure ArgoCD for GitOps
+              return {
+                  'PhysicalResourceId': 'argocd-setup',
+                  'Data': {'Status': 'Configured'}
+              }
+
+  ArgoCDSetupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+Outputs:
+  GitHubRepository:
+    Description: 'GitHub repository being monitored'
+    Value: !Ref GitHubRepo
+  
+  GitHubBranch:
+    Description: 'GitHub branch being tracked'
+    Value: !Ref GitHubBranch
+  
+  PipelineName:
+    Description: 'Name of the CI/CD pipeline'
+    Value: !Ref MLCodePipeline
+  
+  ArtifactsBucket:
+    Description: 'S3 bucket for pipeline artifacts'
+    Value: !Ref PipelineArtifactsBucket
+  
+  WebhookUrl:
+    Description: 'GitHub webhook URL'
+    Value: !GetAtt GitHubWebhook.Url
