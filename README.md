@@ -107,7 +107,7 @@ Deploys only the main infrastructure without CI/CD and data pipelines.
 
 ### Manual Deployment
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed step-by-step instructions.
+See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed step-by-step instructions.
 
 ## 🖥️ Using the Platform
 
@@ -222,10 +222,30 @@ aws s3 rb s3://mlops-platform-data-dev-<account-id>
 
 ## 📚 Documentation
 
-- [Deployment Guide](DEPLOYMENT.md) - Detailed deployment instructions
-- [Requirements](. kiro/specs/mlops-platform/requirements.md) - Feature requirements
-- [Design](. kiro/specs/mlops-platform/design.md) - Technical design
+### Deployment & Operations
+- [Quick Start Guide](docs/QUICKSTART.md) - Get started in minutes
+- [Deployment Guide](docs/DEPLOYMENT.md) - Detailed deployment instructions
+- [Deployment Summary](docs/DEPLOYMENT_SUMMARY.md) - Overview of deployment process
+- [SageMaker Execution Guide](docs/SAGEMAKER_EXECUTION_GUIDE.md) - Running ML jobs
+- [Quick Reference](docs/QUICK_REFERENCE.md) - Common commands and operations
+
+### Architecture & Design
+- [Complete Architecture](docs/COMPLETE_ARCHITECTURE.md) - Full system architecture
+- [AWS Well-Architected](docs/AWS_WELL_ARCHITECTED.md) - Best practices alignment
+- [Requirements](.kiro/specs/mlops-platform/requirements.md) - Feature requirements
+- [Design](.kiro/specs/mlops-platform/design.md) - Technical design
 - [Tasks](.kiro/specs/mlops-platform/tasks.md) - Implementation plan
+
+### CI/CD & GitOps
+- [GitOps Guide](docs/GITOPS_GUIDE.md) - GitOps workflow with GitHub Actions
+- [GitOps vs CodeCommit](docs/GITOPS_VS_CODECOMMIT.md) - Migration rationale
+
+### Frontend Hosting
+- [Amplify Deployment Guide](docs/AMPLIFY_DEPLOYMENT_GUIDE.md) - AWS Amplify setup
+- [UI Hosting Summary](docs/UI_HOSTING_SUMMARY.md) - Frontend hosting options
+
+### Summary
+- [Final Summary](docs/FINAL_SUMMARY.md) - Complete project overview
 
 ## 🤝 Contributing
 
