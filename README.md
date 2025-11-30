@@ -76,7 +76,25 @@ Predict whether a patient will stop taking their medication (non-adherence) for 
 
 ## 🚀 Quick Deployment
 
-### Prerequisites Check
+### Step 1: Setup IAM Permissions
+
+First, ensure you have the required AWS permissions:
+
+```bash
+# Quick setup (creates and attaches policy to your user)
+chmod +x setup-iam-quick.sh
+./setup-iam-quick.sh
+```
+
+Or manually attach the policy:
+```bash
+chmod +x setup-iam-permissions.sh
+./setup-iam-permissions.sh
+```
+
+For detailed IAM setup instructions, see [IAM Setup Guide](docs/IAM_SETUP_GUIDE.md).
+
+### Step 2: Prerequisites Check
 
 Run the prerequisites checker to verify all dependencies:
 
@@ -90,9 +108,9 @@ This will check for:
 - Python 3.9+
 - Node.js 18+
 - Git
-- Required AWS service permissions
+- Required AWS service permissions (CloudFormation, S3, Lambda, etc.)
 
-### Complete Deployment (All Pipelines)
+### Step 3: Complete Deployment (All Pipelines)
 
 ```bash
 chmod +x deploy-complete.sh

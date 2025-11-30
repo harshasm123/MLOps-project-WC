@@ -10,12 +10,17 @@ STACK_NAME_BASE="mlops-platform"
 ENVIRONMENT="dev"
 REGION="us-east-1"
 
+# Get AWS Account ID for unique bucket naming
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+DATASET_BUCKET_NAME="${STACK_NAME_BASE}-data-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
+
 echo "========================================="
 echo "Complete MLOps Platform Deployment"
 echo "AWS Well-Architected Framework Compliant"
 echo "========================================="
 echo "Environment: $ENVIRONMENT"
 echo "Region: $REGION"
+echo "Dataset Bucket: $DATASET_BUCKET_NAME"
 echo "========================================="
 
 # Step 1: Deploy Main Infrastructure
@@ -24,7 +29,9 @@ echo "Step 1: Deploying main infrastructure..."
 aws cloudformation create-stack \
   --stack-name ${STACK_NAME_BASE}-${ENVIRONMENT} \
   --template-body file://infrastructure/cloudformation-template.yaml \
-  --parameters ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
+  --parameters \
+    ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
+    ParameterKey=DatasetBucketName,ParameterValue=$DATASET_BUCKET_NAME \
   --capabilities CAPABILITY_NAMED_IAM \
   --region $REGION
 
