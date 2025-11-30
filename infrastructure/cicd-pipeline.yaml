@@ -150,28 +150,7 @@ Resources:
             Value: !Ref Environment
       Source:
         Type: CODEPIPELINE
-        BuildSpec: |
-          version: 0.2
-          phases:
-            install:
-              runtime-versions:
-                python: 3.11
-              commands:
-                - pip install -r requirements.txt
-            build:
-              commands:
-                - echo "Building ML code..."
-                - python -m py_compile src/**/*.py
-                - echo "Packaging Lambda functions..."
-                - cd backend/lambda
-                - zip -r training_handler.zip training_handler.py
-                - zip -r inference_handler.zip inference_handler.py
-                - zip -r model_registry_handler.zip model_registry_handler.py
-          artifacts:
-            files:
-              - backend/lambda/*.zip
-              - src/**/*
-              - requirements.txt
+        BuildSpec: buildspec.yml
 
   # CodeBuild Project for Testing
   TestBuildProject:
@@ -187,26 +166,7 @@ Resources:
         Image: aws/codebuild/standard:7.0
       Source:
         Type: CODEPIPELINE
-        BuildSpec: |
-          version: 0.2
-          phases:
-            install:
-              runtime-versions:
-                python: 3.11
-              commands:
-                - pip install -r requirements.txt
-                - pip install pytest pytest-cov hypothesis
-            build:
-              commands:
-                - echo "Running tests..."
-                - pytest tests/ -v --cov=src --cov-report=term
-                - echo "Running property-based tests..."
-                - pytest tests/ -m property -v
-          reports:
-            test-results:
-              files:
-                - 'test-results.xml'
-              file-format: 'JUNITXML'
+        BuildSpec: buildspec-test.yml
 
   # CodeBuild Project for Deployment
   DeployBuildProject:
@@ -225,19 +185,7 @@ Resources:
             Value: !Ref Environment
       Source:
         Type: CODEPIPELINE
-        BuildSpec: |
-          version: 0.2
-          phases:
-            install:
-              runtime-versions:
-                python: 3.11
-            build:
-              commands:
-                - echo "Deploying Lambda functions..."
-                - aws lambda update-function-code --function-name mlops-platform-training-handler-${ENVIRONMENT} --zip-file fileb://backend/lambda/training_handler.zip
-                - aws lambda update-function-code --function-name mlops-platform-inference-handler-${ENVIRONMENT} --zip-file fileb://backend/lambda/inference_handler.zip
-                - aws lambda update-function-code --function-name mlops-platform-model-registry-handler-${ENVIRONMENT} --zip-file fileb://backend/lambda/model_registry_handler.zip
-                - echo "Deployment complete!"
+        BuildSpec: buildspec-deploy.yml
 
   # CodePipeline for ML Code (GitHub Source)
   MLCodePipeline:

@@ -1,0 +1,26 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      - echo "Installing dependencies..."
+      - pip install -r requirements.txt
+  
+  build:
+    commands:
+      - echo "Building ML code..."
+      - python -m py_compile src/**/*.py || true
+      - echo "Packaging Lambda functions..."
+      - cd backend/lambda
+      - zip -r training_handler.zip training_handler.py
+      - zip -r inference_handler.zip inference_handler.py
+      - zip -r model_registry_handler.zip model_registry_handler.py
+      - cd ../..
+
+artifacts:
+  files:
+    - backend/lambda/*.zip
+    - src/**/*
+    - requirements.txt
