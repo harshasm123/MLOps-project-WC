@@ -73,10 +73,10 @@ if [ "$OS" = "ubuntu" ] && [ "$VERSION_ID" = "24.04" ]; then
 fi
 
 # Update system packages and install essential tools
-echo "Step 1: Installing essential tools (git, unzip, wget, curl)..."
+echo "Step 1: Installing essential tools (git, unzip, wget, curl, zip)..."
 if [ "$OS" = "amzn" ] || [ "$OS" = "rhel" ] || [ "$OS" = "centos" ]; then
     sudo yum update -y
-    sudo yum install -y git unzip wget curl
+    sudo yum install -y git unzip wget curl zip
 elif [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
     # Fix apt_pkg issue on Ubuntu 24.04
     if [ "$VERSION_ID" = "24.04" ]; then
@@ -86,7 +86,7 @@ elif [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
         sudo apt-get update -y
     fi
     sudo apt-get upgrade -y
-    sudo apt-get install -y git unzip wget curl
+    sudo apt-get install -y git unzip wget curl zip
     # Clean up apt cache to free space
     sudo apt-get clean
     sudo apt-get autoremove -y
@@ -137,6 +137,13 @@ else
     exit 1
 fi
 
+if command -v zip &> /dev/null; then
+    echo "✓ zip installed"
+else
+    echo "✗ zip installation failed"
+    exit 1
+fi
+
 if command -v python3 &> /dev/null; then
     PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2)
     echo "✓ Python installed (version $PYTHON_VERSION)"
@@ -175,6 +182,7 @@ echo ""
 echo "Installed Tools:"
 echo "  ✓ Git $(git --version | cut -d' ' -f3)"
 echo "  ✓ unzip"
+echo "  ✓ zip"
 echo "  ✓ wget"
 echo "  ✓ curl"
 echo "  ✓ Python $(python3 --version 2>&1 | cut -d' ' -f2)"

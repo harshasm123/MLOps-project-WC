@@ -224,9 +224,70 @@ else
     echo "   Install: brew install jq (macOS) or apt-get install jq (Linux)"
 fi
 
+# Check zip (required for Lambda deployment)
+echo ""
+echo "9. Checking zip..."
+ZIP_INSTALLED=false
+if command_exists zip; then
+    ZIP_VERSION=$(zip --version 2>&1 | head -n 2 | tail -n 1 | awk '{print $2}')
+    print_status 0 "zip installed (version $ZIP_VERSION)"
+    ZIP_INSTALLED=true
+fi
+
+if [ "$ZIP_INSTALLED" = false ]; then
+    if [ "$AUTO_INSTALL" = true ]; then
+        echo "   Installing zip..."
+        
+        # Detect OS
+        if [ -f /etc/os-release ]; then
+            . /etc/os-release
+            OS_ID=$ID
+        fi
+        
+        if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
+            # Ubuntu/Debian
+            echo "   Detected Ubuntu/Debian - installing via apt..."
+            sudo apt-get update -qq >/dev/null 2>&1
+            sudo apt-get install -y zip >/dev/null 2>&1
+            print_status $? "zip installed"
+        elif [ "$OS_ID" = "amzn" ] || [ "$OS_ID" = "rhel" ] || [ "$OS_ID" = "centos" ]; then
+            # Amazon Linux / RHEL / CentOS
+            echo "   Detected Amazon Linux/RHEL - installing via yum..."
+            sudo yum install -y zip >/dev/null 2>&1
+            print_status $? "zip installed"
+        elif command_exists brew; then
+            # macOS with Homebrew
+            echo "   Detected macOS - installing via Homebrew..."
+            brew install zip >/dev/null 2>&1
+            print_status $? "zip installed"
+        else
+            print_warning "Could not auto-install zip on this system"
+            echo "   Please install manually"
+            exit 1
+        fi
+        
+        # Verify installation
+        if command_exists zip; then
+            ZIP_VERSION=$(zip --version 2>&1 | head -n 2 | tail -n 1 | awk '{print $2}')
+            print_status 0 "Verified: zip $ZIP_VERSION"
+        else
+            print_status 1 "zip installation failed"
+            exit 1
+        fi
+    else
+        print_status 1 "zip not found (required for Lambda deployment)"
+        echo "   Install: sudo apt-get install zip (Ubuntu/Debian)"
+        echo "   Install: sudo yum install zip (Amazon Linux/RHEL)"
+        echo "   Install: brew install zip (macOS)"
+        echo ""
+        echo "   Or run this script with --install flag: ./prereq.sh --install"
+        exit 1
+    fi
+fi
+
 # Check Docker (optional for local testing)
 echo ""
-echo "9. Checking Docker (optional)..."
+echo "10. Checking Docker (optional)..."
 if command_exists docker; then
     DOCKER_VERSION=$(docker --version | cut -d' ' -f3 | tr -d ',')
     print_status 0 "Docker installed (version $DOCKER_VERSION)"
@@ -237,7 +298,7 @@ fi
 
 # Install Python dependencies
 echo ""
-echo "10. Installing Python dependencies..."
+echo "11. Installing Python dependencies..."
 if [ -f "requirements.txt" ]; then
     echo "   Installing from requirements.txt..."
     
@@ -296,7 +357,7 @@ fi
 
 # Check AWS region
 echo ""
-echo "11. Checking AWS region..."
+echo "12. Checking AWS region..."
 AWS_REGION=$(aws configure get region)
 if [ -z "$AWS_REGION" ]; then
     print_warning "AWS region not set, defaulting to us-east-1"
@@ -307,7 +368,7 @@ fi
 
 # Check required AWS services availability
 echo ""
-echo "12. Checking AWS service availability..."
+echo "13. Checking AWS service availability..."
 
 # Check SageMaker
 if aws sagemaker list-training-jobs --max-results 1 >/dev/null 2>&1; then

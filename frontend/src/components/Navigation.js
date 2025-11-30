@@ -13,7 +13,7 @@ import {
   Psychology,
   Storage,
   Dataset,
-  Monitoring,
+  Analytics as Monitoring,
 } from '@mui/icons-material';
 
 function Navigation() {
