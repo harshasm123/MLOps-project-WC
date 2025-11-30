@@ -76,11 +76,21 @@ Predict whether a patient will stop taking their medication (non-adherence) for 
 
 ## 🚀 Quick Deployment
 
-### Prerequisites
-- AWS Account with appropriate permissions
-- AWS CLI configured
+### Prerequisites Check
+
+Run the prerequisites checker to verify all dependencies:
+
+```bash
+chmod +x prereq.sh
+./prereq.sh
+```
+
+This will check for:
+- AWS CLI and credentials
+- Python 3.9+
 - Node.js 18+
-- Python 3.11+
+- Git
+- Required AWS service permissions
 
 ### Complete Deployment (All Pipelines)
 
@@ -222,30 +232,38 @@ aws s3 rb s3://mlops-platform-data-dev-<account-id>
 
 ## 📚 Documentation
 
-### Deployment & Operations
-- [Quick Start Guide](docs/QUICKSTART.md) - Get started in minutes
-- [Deployment Guide](docs/DEPLOYMENT.md) - Detailed deployment instructions
-- [Deployment Summary](docs/DEPLOYMENT_SUMMARY.md) - Overview of deployment process
-- [SageMaker Execution Guide](docs/SAGEMAKER_EXECUTION_GUIDE.md) - Running ML jobs
-- [Quick Reference](docs/QUICK_REFERENCE.md) - Common commands and operations
+### Getting Started
+- 🚀 [Project Summary](docs/PROJECT_SUMMARY.md) - **START HERE** - Complete overview
+- 🛠️ [Setup Scripts Guide](docs/SETUP_SCRIPTS.md) - ec2-setup.sh vs prereq.sh
+- ⚡ [Quick Start Guide](docs/QUICKSTART.md) - Get started in minutes
+- 📦 [Deployment Guide](docs/DEPLOYMENT.md) - Detailed deployment instructions
+
+### Backend & API
+- 🔧 [Backend Enhancements](docs/BACKEND_ENHANCEMENTS.md) - Lambda handlers, API endpoints
+- 🤖 [SageMaker Execution Guide](docs/SAGEMAKER_EXECUTION_GUIDE.md) - Running ML jobs
+- 📖 [Quick Reference](docs/QUICK_REFERENCE.md) - Common commands
 
 ### Architecture & Design
-- [Complete Architecture](docs/COMPLETE_ARCHITECTURE.md) - Full system architecture
-- [AWS Well-Architected](docs/AWS_WELL_ARCHITECTED.md) - Best practices alignment
-- [Requirements](.kiro/specs/mlops-platform/requirements.md) - Feature requirements
-- [Design](.kiro/specs/mlops-platform/design.md) - Technical design
-- [Tasks](.kiro/specs/mlops-platform/tasks.md) - Implementation plan
+- 🏗️ [Complete Architecture](docs/COMPLETE_ARCHITECTURE.md) - Full system architecture
+- ✅ [AWS Well-Architected](docs/AWS_WELL_ARCHITECTED.md) - Best practices alignment
+- 📋 [Requirements](.kiro/specs/mlops-platform/requirements.md) - Feature requirements
+- 🎨 [Design](.kiro/specs/mlops-platform/design.md) - Technical design
+- ✔️ [Tasks](.kiro/specs/mlops-platform/tasks.md) - Implementation plan
 
-### CI/CD & GitOps
-- [GitOps Guide](docs/GITOPS_GUIDE.md) - GitOps workflow with GitHub Actions
-- [GitOps vs CodeCommit](docs/GITOPS_VS_CODECOMMIT.md) - Migration rationale
+### UI Specification (New!)
+- 📱 [UI Requirements](.kiro/specs/medication-adherence-ui/requirements.md) - 14 requirements, 70 criteria
+- 🎨 [UI Design](.kiro/specs/medication-adherence-ui/design.md) - 63 correctness properties
+- ✅ [UI Tasks](.kiro/specs/medication-adherence-ui/tasks.md) - 21 tasks, 90+ sub-tasks
 
-### Frontend Hosting
-- [Amplify Deployment Guide](docs/AMPLIFY_DEPLOYMENT_GUIDE.md) - AWS Amplify setup
-- [UI Hosting Summary](docs/UI_HOSTING_SUMMARY.md) - Frontend hosting options
+### CI/CD & Deployment
+- 🔄 [GitOps Guide](docs/GITOPS_GUIDE.md) - GitOps workflow with GitHub Actions
+- 📊 [GitOps vs CodeCommit](docs/GITOPS_VS_CODECOMMIT.md) - Migration rationale
+- ☁️ [Amplify Deployment Guide](docs/AMPLIFY_DEPLOYMENT_GUIDE.md) - AWS Amplify setup
+- 🌐 [UI Hosting Summary](docs/UI_HOSTING_SUMMARY.md) - Frontend hosting options
 
-### Summary
-- [Final Summary](docs/FINAL_SUMMARY.md) - Complete project overview
+### Summaries
+- 📄 [Deployment Summary](docs/DEPLOYMENT_SUMMARY.md) - Deployment overview
+- 📝 [Final Summary](docs/FINAL_SUMMARY.md) - Complete project overview
 
 ## 🤝 Contributing
 

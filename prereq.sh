@@ -172,8 +172,23 @@ echo ""
 echo "10. Installing Python dependencies..."
 if [ -f "requirements.txt" ]; then
     echo "   Installing from requirements.txt..."
-    pip3 install -r requirements.txt --quiet
-    print_status $? "Python dependencies installed"
+    
+    # Detect OS for PEP 668 handling
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS_ID=$ID
+        OS_VERSION=$VERSION_ID
+    fi
+    
+    # Handle Ubuntu/Debian PEP 668 restriction
+    if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
+        echo "   Detected Ubuntu/Debian - using --break-system-packages flag"
+        pip3 install --break-system-packages -r requirements.txt --quiet
+        print_status $? "Python dependencies installed (with --break-system-packages)"
+    else
+        pip3 install -r requirements.txt --quiet
+        print_status $? "Python dependencies installed"
+    fi
 else
     print_warning "requirements.txt not found, skipping Python dependencies"
 fi
