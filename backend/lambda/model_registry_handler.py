@@ -1,38 +1,45 @@
 """
-Lambda function to handle model registry operations.
+Model Registry Lambda handler for MLOps Platform.
 Manages model versions, metadata, and approval workflows.
 """
 
 import json
 import boto3
-import os
+import logging
 from datetime import datetime
+from botocore.exceptions import ClientError
 
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# AWS clients
 dynamodb = boto3.resource('dynamodb')
-sagemaker = boto3.client('sagemaker')
-
-MODELS_TABLE = os.environ.get('MODELS_TABLE', 'mlops-models')
-
+s3 = boto3.client('s3')
 
 def lambda_handler(event, context):
     """
-    Handle model registry requests.
+    Handle model registry operations.
     
     Supported operations:
     - GET /models - List all models
     - GET /models/{version} - Get specific model
-    - POST /models/{version}/approve - Approve model
+    - POST /models - Register new model
+    - PUT /models/{version}/approve - Approve model
     """
     try:
-        http_method = event.get('httpMethod')
-        path = event.get('path', '')
+        http_method = event.get('httpMethod', 'GET')
+        path = event.get('path', '/models')
         
         if http_method == 'GET' and path == '/models':
             return list_models()
         elif http_method == 'GET' and '/models/' in path:
             version = path.split('/')[-1]
             return get_model(version)
-        elif http_method == 'POST' and '/approve' in path:
+        elif http_method == 'POST' and path == '/models':
+            body = json.loads(event.get('body', '{}'))
+            return register_model(body)
+        elif http_method == 'PUT' and 'approve' in path:
             version = path.split('/')[-2]
             return approve_model(version)
         else:
@@ -42,11 +49,11 @@ def lambda_handler(event, context):
                     'Content-Type': 'application/json',
                     'Access-Control-Allow-Origin': '*'
                 },
-                'body': json.dumps({'message': 'Not found'})
+                'body': json.dumps({'error': 'Not Found'})
             }
             
     except Exception as e:
-        print(f"Error in model registry handler: {str(e)}")
+        logger.error(f"Error in model registry: {str(e)}")
         return {
             'statusCode': 500,
             'headers': {
@@ -54,7 +61,8 @@ def lambda_handler(event, context):
                 'Access-Control-Allow-Origin': '*'
             },
             'body': json.dumps({
-                'message': f'Internal server error: {str(e)}'
+                'error': 'InternalError',
+                'message': 'Model registry operation failed'
             })
         }
 
@@ -62,11 +70,15 @@ def lambda_handler(event, context):
 def list_models():
     """List all registered models."""
     try:
-        table = dynamodb.Table(MODELS_TABLE)
-        response = table.scan()
+        table_name = 'mlops-platform-models-dev'  # Should come from env var
+        table = dynamodb.Table(table_name)
         
+        response = table.scan()
         models = response.get('Items', [])
         
+        # Sort by creation date
+        models.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+        
         return {
             'statusCode': 200,
             'headers': {
@@ -74,67 +86,32 @@ def list_models():
                 'Access-Control-Allow-Origin': '*'
             },
             'body': json.dumps({
-                'models': models
+                'models': models,
+                'count': len(models)
             })
         }
+        
     except Exception as e:
-        print(f"Error listing models: {str(e)}")
-        # Return mock data for demonstration
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-            },
-            'body': json.dumps({
-                'models': [
-                    {
-                        'modelGroup': 'medication-adherence-model',
-                        'version': 'v1.0.0',
-                        'algorithm': 'RandomForest',
-                        'metrics': {
-                            'accuracy': 0.85,
-                            'f1Score': 0.83,
-                            'precision': 0.84,
-                            'recall': 0.82
-                        },
-                        'approvalStatus': 'approved',
-                        'createdAt': '2024-01-15T10:30:00Z'
-                    },
-                    {
-                        'modelGroup': 'medication-adherence-model',
-                        'version': 'v1.1.0',
-                        'algorithm': 'XGBoost',
-                        'metrics': {
-                            'accuracy': 0.87,
-                            'f1Score': 0.85,
-                            'precision': 0.86,
-                            'recall': 0.84
-                        },
-                        'approvalStatus': 'pending',
-                        'createdAt': '2024-01-20T14:45:00Z'
-                    }
-                ]
-            })
-        }
+        logger.error(f"Error listing models: {str(e)}")
+        raise
 
 
 def get_model(version):
-    """Get a specific model by version."""
+    """Get specific model by version."""
     try:
-        table = dynamodb.Table(MODELS_TABLE)
+        table_name = 'mlops-platform-models-dev'
+        table = dynamodb.Table(table_name)
+        
         response = table.get_item(Key={'version': version})
         
-        model = response.get('Item')
-        
-        if not model:
+        if 'Item' not in response:
             return {
                 'statusCode': 404,
                 'headers': {
                     'Content-Type': 'application/json',
                     'Access-Control-Allow-Origin': '*'
                 },
-                'body': json.dumps({'message': 'Model not found'})
+                'body': json.dumps({'error': 'Model not found'})
             }
         
         return {
@@ -143,33 +120,75 @@ def get_model(version):
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*'
             },
-            'body': json.dumps({'model': model})
+            'body': json.dumps(response['Item'])
         }
+        
     except Exception as e:
-        print(f"Error getting model: {str(e)}")
+        logger.error(f"Error getting model {version}: {str(e)}")
+        raise
+
+
+def register_model(model_data):
+    """Register a new model version."""
+    try:
+        table_name = 'mlops-platform-models-dev'
+        table = dynamodb.Table(table_name)
+        
+        # Generate version if not provided
+        version = model_data.get('version', f"v{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+        
+        model_item = {
+            'version': version,
+            'modelGroup': model_data.get('modelGroup', 'medication-adherence'),
+            'algorithm': model_data.get('algorithm', 'RandomForest'),
+            'accuracy': float(model_data.get('accuracy', 0.0)),
+            'precision': float(model_data.get('precision', 0.0)),
+            'recall': float(model_data.get('recall', 0.0)),
+            'f1Score': float(model_data.get('f1Score', 0.0)),
+            'aucRoc': float(model_data.get('aucRoc', 0.0)),
+            'modelUri': model_data.get('modelUri', ''),
+            'trainingJobName': model_data.get('trainingJobName', ''),
+            'status': 'Pending',
+            'createdAt': datetime.utcnow().isoformat(),
+            'createdBy': model_data.get('createdBy', 'system')
+        }
+        
+        table.put_item(Item=model_item)
+        
         return {
-            'statusCode': 500,
+            'statusCode': 201,
             'headers': {
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*'
             },
-            'body': json.dumps({'message': str(e)})
+            'body': json.dumps({
+                'message': 'Model registered successfully',
+                'version': version,
+                'model': model_item
+            })
         }
+        
+    except Exception as e:
+        logger.error(f"Error registering model: {str(e)}")
+        raise
 
 
 def approve_model(version):
-    """Approve a model for deployment."""
+    """Approve a model version for production use."""
     try:
-        table = dynamodb.Table(MODELS_TABLE)
+        table_name = 'mlops-platform-models-dev'
+        table = dynamodb.Table(table_name)
         
-        # Update approval status
-        table.update_item(
+        # Update model status
+        response = table.update_item(
             Key={'version': version},
-            UpdateExpression='SET approvalStatus = :status, approvedAt = :timestamp',
+            UpdateExpression='SET #status = :status, approvedAt = :timestamp',
+            ExpressionAttributeNames={'#status': 'status'},
             ExpressionAttributeValues={
-                ':status': 'approved',
-                ':timestamp': datetime.now().isoformat()
-            }
+                ':status': 'Approved',
+                ':timestamp': datetime.utcnow().isoformat()
+            },
+            ReturnValues='ALL_NEW'
         )
         
         return {
@@ -180,16 +199,10 @@ def approve_model(version):
             },
             'body': json.dumps({
                 'message': 'Model approved successfully',
-                'version': version
+                'model': response['Attributes']
             })
         }
+        
     except Exception as e:
-        print(f"Error approving model: {str(e)}")
-        return {
-            'statusCode': 500,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-            },
-            'body': json.dumps({'message': str(e)})
-        }
+        logger.error(f"Error approving model {version}: {str(e)}")
+        raise

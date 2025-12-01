@@ -6,7 +6,13 @@ Triggers SageMaker training jobs for medication adherence prediction.
 import json
 import boto3
 import os
+import logging
 from datetime import datetime
+from botocore.exceptions import ClientError, BotoCoreError
+
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 sagemaker = boto3.client('sagemaker')
 s3 = boto3.client('s3')
@@ -29,14 +35,23 @@ def lambda_handler(event, context):
     }
     """
     try:
+        logger.info(f"Received training request: {json.dumps(event, default=str)}")
+        
         # Parse request body
+        if 'body' not in event:
+            raise ValueError("Missing request body")
+            
         body = json.loads(event.get('body', '{}'))
         
+        # Validate required parameters
         dataset_uri = body.get('datasetUri')
-        model_name = body.get('modelName', 'medication-adherence-model')
-        algorithm = body.get('algorithm', 'RandomForest')
-        instance_type = body.get('instanceType', 'ml.m5.xlarge')
-        max_runtime = body.get('maxRuntime', 3600)
+        if not dataset_uri or not dataset_uri.startswith('s3://'):
+            raise ValueError("Valid S3 dataset URI is required")
+            
+        model_name = validate_model_name(body.get('modelName', 'medication-adherence-model'))
+        algorithm = validate_algorithm(body.get('algorithm', 'RandomForest'))
+        instance_type = validate_instance_type(body.get('instanceType', 'ml.m5.xlarge'))
+        max_runtime = min(int(body.get('maxRuntime', 3600)), 86400)  # Max 24 hours
         
         # Generate unique training job name
         timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -98,8 +113,34 @@ def lambda_handler(event, context):
             })
         }
         
+    except ValueError as e:
+        logger.error(f"Validation error: {str(e)}")
+        return {
+            'statusCode': 400,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({
+                'error': 'ValidationError',
+                'message': str(e)
+            })
+        }
+    except (ClientError, BotoCoreError) as e:
+        logger.error(f"AWS service error: {str(e)}")
+        return {
+            'statusCode': 503,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({
+                'error': 'ServiceError',
+                'message': 'AWS service temporarily unavailable'
+            })
+        }
     except Exception as e:
-        print(f"Error starting training job: {str(e)}")
+        logger.error(f"Unexpected error: {str(e)}")
         return {
             'statusCode': 500,
             'headers': {
@@ -107,7 +148,8 @@ def lambda_handler(event, context):
                 'Access-Control-Allow-Origin': '*'
             },
             'body': json.dumps({
-                'message': f'Failed to start training job: {str(e)}'
+                'error': 'InternalError',
+                'message': 'Internal server error'
             })
         }
 
@@ -147,3 +189,35 @@ def get_hyperparameters(algorithm):
     }
     
     return hyperparameters.get(algorithm, hyperparameters['RandomForest'])
+
+
+def validate_model_name(name):
+    """Validate and sanitize model name."""
+    if not name or not isinstance(name, str):
+        raise ValueError("Model name must be a non-empty string")
+    
+    # Remove special characters and limit length
+    import re
+    sanitized = re.sub(r'[^a-zA-Z0-9-]', '-', name)[:50]
+    if not sanitized:
+        raise ValueError("Invalid model name")
+    return sanitized
+
+
+def validate_algorithm(algorithm):
+    """Validate algorithm choice."""
+    allowed_algorithms = ['RandomForest', 'XGBoost', 'LogisticRegression']
+    if algorithm not in allowed_algorithms:
+        raise ValueError(f"Algorithm must be one of: {allowed_algorithms}")
+    return algorithm
+
+
+def validate_instance_type(instance_type):
+    """Validate SageMaker instance type."""
+    allowed_types = [
+        'ml.m5.large', 'ml.m5.xlarge', 'ml.m5.2xlarge',
+        'ml.c5.large', 'ml.c5.xlarge', 'ml.c5.2xlarge'
+    ]
+    if instance_type not in allowed_types:
+        raise ValueError(f"Instance type must be one of: {allowed_types}")
+    return instance_type

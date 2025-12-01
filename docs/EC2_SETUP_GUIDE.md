@@ -1,352 +1,170 @@
-# EC2 Setup Guide
+# EC2 Setup Guide for MLOps Platform
 
 ## Overview
 
-This guide walks you through setting up a fresh EC2 instance for the MLOps platform using the `ec2-setup.sh` script.
+This guide covers setting up an EC2 instance to run the MLOps Platform deployment scripts and development environment.
 
 ## Prerequisites
 
-- AWS account with EC2 access
-- EC2 instance running a supported Linux distribution:
-  - Amazon Linux 2023
-  - Ubuntu 24.04 / 22.04 / 20.04
-  - Debian 11 / 12
-  - RHEL 8 / 9
-  - CentOS 8 / 9
-- SSH access to the EC2 instance
-- At least 10GB of free disk space (recommended)
+- AWS Account with appropriate permissions
+- EC2 instance (t3.medium or larger recommended)
+- Ubuntu 22.04 LTS or Amazon Linux 2
 
-## Quick Start
+## Instance Setup
 
-### Step 1: Connect to EC2 Instance
+### Step 1: Launch EC2 Instance
 
 ```bash
-# SSH into your EC2 instance
-ssh -i your-key.pem ubuntu@<ec2-public-ip>
-
-# Or for Amazon Linux
-ssh -i your-key.pem ec2-user@<ec2-public-ip>
+# Recommended instance type
+Instance Type: t3.medium or t3.large
+AMI: Ubuntu 22.04 LTS or Amazon Linux 2
+Storage: 50GB gp3
+Security Group: Allow SSH (22), HTTP (80), HTTPS (443)
 ```
 
-### Step 2: Download and Run Setup Script
+### Step 2: Connect to Instance
 
 ```bash
-# Download the setup script
-wget https://raw.githubusercontent.com/your-repo/main/ec2-setup.sh
-
-# Make it executable
-chmod +x ec2-setup.sh
-
-# Run the script
-./ec2-setup.sh
+ssh -i your-key.pem ubuntu@your-instance-ip
 ```
 
-### Step 3: Configure AWS Credentials
+### Step 3: Update System
+
+```bash
+sudo apt update && sudo apt upgrade -y
+```
+
+### Step 4: Install Dependencies
+
+```bash
+# AWS CLI
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+
+# Python 3.11
+sudo apt install -y python3.11 python3.11-venv python3-pip
+
+# Node.js 18
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Git
+sudo apt install -y git
+
+# jq (for JSON parsing)
+sudo apt install -y jq
+```
+
+### Step 5: Configure AWS Credentials
 
 ```bash
 aws configure
 # Enter your AWS Access Key ID
 # Enter your AWS Secret Access Key
-# Enter default region (e.g., us-east-1)
+# Enter default region (us-east-1)
 # Enter default output format (json)
 ```
 
-### Step 4: Clone Repository and Continue Setup
+### Step 6: Clone Repository
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-repo/mlops-platform.git
+git clone https://github.com/your-org/mlops-platform.git
 cd mlops-platform
-
-# Run full prerequisites check
-chmod +x prereq.sh
-./prereq.sh
-
-# Deploy the platform
-./deploy-complete.sh
 ```
 
-## What the Script Does
+### Step 7: Install Python Dependencies
 
-The `ec2-setup.sh` script performs the following actions:
+```bash
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
 
-1. **OS Detection**
-   - Detects the operating system and version
-   - Validates that the OS is supported
-   - Exits with error if OS is unsupported
+### Step 8: Install Frontend Dependencies
 
-2. **Disk Space Check**
-   - Checks available disk space
-   - Warns if less than 5GB available
-   - Prompts user to continue or abort
+```bash
+cd frontend
+npm install
+cd ..
+```
 
-3. **Essential Tools Installation**
-   - Installs: git, unzip, wget, curl
-   - Uses appropriate package manager (yum or apt-get)
-   - Cleans up package cache to save space
+## Deployment
 
-4. **Python and pip Installation**
-   - Installs Python 3.9 or higher
-   - Installs pip3 package manager
-   - Verifies both are accessible
+### Run Prerequisites Check
 
-5. **AWS CLI Installation**
-   - Downloads and installs AWS CLI v2
-   - Skips if already installed
-   - Removes temporary installation files
+```bash
+chmod +x prereq.sh
+./prereq.sh
+```
 
-6. **Verification**
-   - Verifies each tool is accessible
-   - Displays version information
-   - Exits with error if any verification fails
+### Deploy Platform
 
-7. **Summary**
-   - Displays all installed tools and versions
-   - Provides clear next steps
+```bash
+chmod +x deploy.sh
 
-## Script Features
+# Full deployment with CloudFront
+./deploy.sh --full-cloudfront
 
-### Idempotency
+# Or infrastructure only
+./deploy.sh
+```
 
-The script is idempotent - you can safely run it multiple times:
-- Already-installed tools are detected and skipped
-- Existing versions are displayed
-- No errors from duplicate installations
+## Monitoring
 
-### Multi-OS Support
+### View Logs
 
-Automatically detects and handles:
-- **Amazon Linux / RHEL / CentOS**: Uses `yum` package manager
-- **Ubuntu / Debian**: Uses `apt-get` package manager
-- **Ubuntu 24.04**: Special handling for apt_pkg issues
+```bash
+# CloudFormation events
+aws cloudformation describe-stack-events --stack-name mlops-platform-dev
 
-### Error Handling
+# Lambda logs
+aws logs tail /aws/lambda/mlops-platform-training-handler-dev --follow
 
-- Fail-fast behavior: exits immediately on critical errors
-- Clear error messages with troubleshooting guidance
-- Non-zero exit codes for all error conditions
-- Package manager errors are propagated to output
+# SageMaker jobs
+aws sagemaker list-training-jobs --max-results 10
+```
 
-### Disk Space Optimization
+## Cleanup
 
-- Cleans apt cache after installation (Ubuntu/Debian)
-- Removes unnecessary packages with autoremove
-- Removes temporary AWS CLI installation files
-- Total disk usage: ~700MB
+```bash
+# Delete CloudFormation stack
+aws cloudformation delete-stack --stack-name mlops-platform-dev
+
+# Delete S3 buckets
+aws s3 rm s3://your-bucket --recursive
+aws s3 rb s3://your-bucket
+```
 
 ## Troubleshooting
 
-### "Cannot detect OS"
-
-**Cause:** Missing or invalid `/etc/os-release` file
-
-**Solution:**
+### AWS CLI Not Found
 ```bash
-# Check if file exists
-cat /etc/os-release
-
-# If missing, you may be on an unsupported distribution
-# Install tools manually or use a supported OS
+which aws
+# If not found, reinstall AWS CLI
 ```
 
-### "Unsupported OS: <os-name>"
-
-**Cause:** Running on a Linux distribution that's not supported
-
-**Solution:**
-- Use a supported distribution (Amazon Linux, Ubuntu, Debian, RHEL, CentOS)
-- Or install tools manually:
-  ```bash
-  # Install required tools using your package manager
-  # git, unzip, wget, curl, python3, python3-pip, AWS CLI
-  ```
-
-### "Low disk space" Warning
-
-**Cause:** Less than 5GB of free disk space
-
-**Solution:**
+### Python Version Issues
 ```bash
-# Check disk usage
-df -h
-
-# Clean up if needed
-sudo apt-get clean
-sudo apt-get autoremove -y
-
-# Or increase EBS volume size in AWS Console
+python3.11 --version
+# Should be 3.11.x
 ```
 
-### "Python installation failed"
-
-**Cause:** Python package not available or installation error
-
-**Solution:**
+### Node.js Version Issues
 ```bash
-# Ubuntu/Debian
-sudo apt-get update
-sudo apt-get install -y python3 python3-pip
-
-# Amazon Linux/RHEL
-sudo yum install -y python3 python3-pip
-
-# Verify installation
-python3 --version
-pip3 --version
+node --version
+# Should be v18.x or higher
 ```
 
-### "pip installation failed"
-
-**Cause:** pip package not available or installation error
-
-**Solution:**
+### Permission Denied
 ```bash
-# Try installing pip separately
-sudo apt-get install -y python3-pip  # Ubuntu/Debian
-sudo yum install -y python3-pip      # Amazon Linux/RHEL
-
-# Or use ensurepip
-python3 -m ensurepip
-
-# Verify installation
-pip3 --version
+chmod +x deploy.sh prereq.sh
 ```
 
-### "AWS CLI installation failed"
+## Best Practices
 
-**Cause:** Network issues or download failure
-
-**Solution:**
-```bash
-# Check internet connectivity
-ping google.com
-
-# Try manual installation
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-unzip awscliv2.zip
-sudo ./aws/install
-rm -rf aws awscliv2.zip
-
-# Verify installation
-aws --version
-```
-
-### Permission Errors
-
-**Cause:** Insufficient privileges for sudo commands
-
-**Solution:**
-```bash
-# Ensure you're using a user with sudo access
-sudo -v
-
-# If not, switch to a user with sudo privileges
-# Or run commands as root (not recommended)
-```
-
-## EC2 Instance Recommendations
-
-### Instance Type
-
-- **Minimum**: t2.micro (1 vCPU, 1GB RAM) - for testing only
-- **Recommended**: t3.small (2 vCPU, 2GB RAM) - for development
-- **Production**: t3.medium or larger (2 vCPU, 4GB RAM+)
-
-### Storage
-
-- **Minimum**: 10GB EBS volume
-- **Recommended**: 20GB EBS volume
-- **Type**: gp3 (better performance/cost than gp2)
-
-### AMI Selection
-
-Recommended AMIs:
-- **Amazon Linux 2023** (ami-0c55b159cbfafe1f0)
-- **Ubuntu 24.04 LTS** (ami-0c7217cdde317cfec)
-- **Ubuntu 22.04 LTS** (ami-0c7217cdde317cfec)
-
-### Security Group
-
-Ensure your security group allows:
-- SSH (port 22) from your IP
-- HTTPS (port 443) for AWS API calls
-- Any application-specific ports
-
-### IAM Role
-
-Attach an IAM role with permissions for:
-- SageMaker (full access or specific permissions)
-- S3 (read/write access)
-- Lambda (if using Lambda functions)
-- CloudFormation (for infrastructure deployment)
-
-## Performance
-
-### Execution Time
-
-- **t2.micro**: ~5-7 minutes
-- **t3.small**: ~3-5 minutes
-- **t3.medium**: ~2-3 minutes
-
-### Network Usage
-
-- Total download: ~100MB
-- AWS CLI installer: ~50MB
-- Package updates: ~50MB
-
-### Disk Space Usage
-
-- Essential tools: ~100MB
-- Python + pip: ~200MB
-- AWS CLI: ~150MB
-- Temporary files: ~50MB (cleaned up)
-- **Total**: ~700MB
-
-## Next Steps
-
-After running `ec2-setup.sh`:
-
-1. **Configure AWS credentials** (required)
-   ```bash
-   aws configure
-   ```
-
-2. **Clone the repository** (required)
-   ```bash
-   git clone https://github.com/your-repo/mlops-platform.git
-   cd mlops-platform
-   ```
-
-3. **Run prerequisites check** (required)
-   ```bash
-   chmod +x prereq.sh
-   ./prereq.sh
-   ```
-
-4. **Deploy the platform** (optional)
-   ```bash
-   ./deploy-complete.sh
-   ```
-
-## Additional Resources
-
-- [Setup Scripts Guide](SETUP_SCRIPTS.md) - Detailed comparison of setup scripts
-- [Prerequisites Guide](QUICKSTART.md) - Full prerequisites documentation
-- [Deployment Guide](DEPLOYMENT.md) - Platform deployment instructions
-- [AWS Well-Architected](AWS_WELL_ARCHITECTED.md) - Architecture best practices
-
-## Support
-
-If you encounter issues:
-
-1. Check the error message carefully
-2. Review the troubleshooting section above
-3. Verify disk space: `df -h`
-4. Check internet connectivity: `ping google.com`
-5. Verify AWS credentials: `aws sts get-caller-identity`
-6. Review logs in `/var/log/` (on Linux)
-
-For deployment issues, see:
-- [Deployment Guide](DEPLOYMENT.md)
-- [Quick Start Guide](QUICKSTART.md)
-- [Backend Enhancements](BACKEND_ENHANCEMENTS.md)
+1. **Use IAM Roles**: Attach IAM role to EC2 instead of using access keys
+2. **Security Groups**: Restrict SSH access to your IP
+3. **Monitoring**: Enable CloudWatch monitoring
+4. **Backups**: Regular snapshots of EBS volumes
+5. **Cost**: Use spot instances for non-production environments

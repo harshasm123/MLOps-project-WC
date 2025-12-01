@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
+import { StyledEngineProvider } from '@mui/material/styles';
 import Dashboard from './components/Dashboard';
 import TrainingPipeline from './components/TrainingPipeline';
 import InferencePipeline from './components/InferencePipeline';
@@ -24,9 +25,10 @@ const theme = createTheme({
 
 function App() {
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <Router>
+    <StyledEngineProvider injectFirst>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Router>
         <Navigation />
         <Routes>
           <Route path="/" element={<Dashboard />} />

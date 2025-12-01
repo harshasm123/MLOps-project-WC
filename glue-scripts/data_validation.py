@@ -108,15 +108,19 @@ try:
     
     print(f"Loaded {df.count()} rows with {len(df.columns)} columns")
     
-    # Expected schema for diabetic dataset
+    # Expected schema for medication adherence dataset
     expected_columns = [
         'patient_id',
         'age',
         'gender',
-        'medication_brand',
-        'prescription_date',
-        'refill_count',
-        'adherence_history'
+        'race',
+        'diagnosis',
+        'medication_name',
+        'medication_type',
+        'dosage_frequency',
+        'previous_adherence_rate',
+        'comorbidities_count',
+        'adherence'
     ]
     
     # Validate schema

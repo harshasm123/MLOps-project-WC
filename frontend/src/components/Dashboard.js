@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Container,
   Grid,
@@ -7,6 +7,8 @@ import {
   Box,
   Card,
   CardContent,
+  Alert,
+  CircularProgress,
 } from '@mui/material';
 import {
   TrendingUp,
@@ -17,7 +19,11 @@ import {
 } from '@mui/icons-material';
 import axios from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://your-api-gateway-url.amazonaws.com/prod';
+const API_BASE_URL = process.env.REACT_APP_API_URL;
+
+if (!API_BASE_URL) {
+  console.error('REACT_APP_API_URL environment variable is not set');
+}
 
 function Dashboard() {
   const [stats, setStats] = useState({
@@ -26,19 +32,46 @@ function Dashboard() {
     recentPredictions: 0,
     driftAlerts: 0,
   });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchDashboardStats = useCallback(async () => {
+    if (!API_BASE_URL) {
+      setError('API URL not configured');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const response = await axios.get(`${API_BASE_URL}/dashboard/stats`, {
+        timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (response.data && typeof response.data === 'object') {
+        setStats({
+          totalModels: Number(response.data.totalModels) || 0,
+          activeTrainingJobs: Number(response.data.activeTrainingJobs) || 0,
+          recentPredictions: Number(response.data.recentPredictions) || 0,
+          driftAlerts: Number(response.data.driftAlerts) || 0,
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching dashboard stats:', error);
+      setError(error.response?.data?.message || 'Failed to load dashboard data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchDashboardStats();
-  }, []);
-
-  const fetchDashboardStats = async () => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/dashboard/stats`);
-      setStats(response.data);
-    } catch (error) {
-      console.error('Error fetching dashboard stats:', error);
-    }
-  };
+  }, [fetchDashboardStats]);
 
   const StatCard = ({ title, value, icon, color }) => (
     <Card>
@@ -60,11 +93,25 @@ function Dashboard() {
     </Card>
   );
 
+  if (loading) {
+    return (
+      <Container maxWidth="lg" sx={{ mt: 4, mb: 4, display: 'flex', justifyContent: 'center' }}>
+        <CircularProgress />
+      </Container>
+    );
+  }
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Typography variant="h4" gutterBottom>
         MLOps Platform Dashboard
       </Typography>
+      
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
       
       <Grid container spacing={3} sx={{ mt: 2 }}>
         <Grid item xs={12} sm={6} md={3}>

@@ -28,11 +28,21 @@ Resources:
       BucketName: !Ref DatasetBucketName
       VersioningConfiguration:
         Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      NotificationConfiguration:
+        CloudWatchConfigurations:
+          - Event: s3:ObjectCreated:*
+            CloudWatchConfiguration:
+              LogGroupName: !Sub '/aws/s3/${ProjectName}-${Environment}'
       Tags:
         - Key: Project
           Value: !Ref ProjectName
@@ -45,14 +55,26 @@ Resources:
       BucketName: !Sub '${ProjectName}-models-${Environment}-${AWS::AccountId}'
       VersioningConfiguration:
         Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
       Tags:
         - Key: Project
           Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
 
   # DynamoDB Table for Model Registry
   ModelsTable:
@@ -93,7 +115,7 @@ Resources:
                 - sagemaker.amazonaws.com
             Action: 'sts:AssumeRole'
       ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/AmazonSageMakerFullAccess'
+        - 'arn:aws:iam::aws:policy/AmazonSageMakerReadOnly'
       Policies:
         - PolicyName: S3Access
           PolicyDocument:
@@ -231,6 +253,24 @@ Resources:
           def lambda_handler(event, context):
               return {'statusCode': 200, 'body': 'Model registry handler'}
 
+  DashboardHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-dashboard-handler-${Environment}'
+      Runtime: python3.11
+      Handler: dashboard_handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          MODELS_TABLE: !Ref ModelsTable
+      Code:
+        ZipFile: |
+          # Placeholder - deploy actual code from backend/lambda/dashboard_handler.py
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Dashboard handler'}
+
   # API Gateway
   ApiGateway:
     Type: AWS::ApiGatewayV2::Api
@@ -281,6 +321,14 @@ Resources:
       IntegrationUri: !GetAtt ModelRegistryHandlerFunction.Arn
       PayloadFormatVersion: '2.0'
 
+  DashboardIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt DashboardHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
   # API Routes
   TrainingRoute:
     Type: AWS::ApiGatewayV2::Route
@@ -303,6 +351,13 @@ Resources:
       RouteKey: 'GET /models'
       Target: !Sub 'integrations/${ModelRegistryIntegration}'
 
+  DashboardStatsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /dashboard/stats'
+      Target: !Sub 'integrations/${DashboardIntegration}'
+
   # Lambda Permissions
   TrainingLambdaPermission:
     Type: AWS::Lambda::Permission
@@ -324,6 +379,14 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref ModelRegistryHandlerFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
+
+  DashboardLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DashboardHandlerFunction
       Action: 'lambda:InvokeFunction'
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'

@@ -10,7 +10,7 @@ Predict whether a patient will stop taking their medication (non-adherence) for 
 
 ### Frontend
 - **React 18** with Material-UI
-- Hosted on **AWS Amplify** (simpler than CloudFront!)
+- Hosted on **CloudFront** with S3 origin
 - Automatic CI/CD from GitHub
 - Real-time dashboard for monitoring ML operations
 
@@ -21,7 +21,8 @@ Predict whether a patient will stop taking their medication (non-adherence) for 
 - **S3** for data and model storage
 
 ### ML Infrastructure
-- **Amazon SageMaker** for training and inference
+- **Amazon SageMaker AI** for training and inference
+- **CloudFront** for global content delivery
 - **CloudWatch** for monitoring and drift detection
 - Automated pipelines for training and batch inference
 
@@ -64,9 +65,12 @@ Predict whether a patient will stop taking their medication (non-adherence) for 
 │   └── lambda/
 │       ├── training_handler.py
 │       ├── inference_handler.py
-│       └── model_registry_handler.py
+│       ├── model_registry_handler.py
+│       └── dashboard_handler.py
 ├── infrastructure/              # CloudFormation templates
-│   └── cloudformation-template.yaml
+│   ├── cloudformation-template.yaml
+│   ├── cloudfront-template.yaml
+│   └── data-pipeline.yaml
 ├── src/                        # Python ML code
 │   ├── models/                 # Data models
 │   ├── pipelines/              # Training/inference pipelines
@@ -112,28 +116,40 @@ This will check for:
 
 ### Step 3: Deploy the Platform
 
-**Option A: Full Deployment** (Infrastructure + CI/CD + Data Pipeline)
+**Option A: Full Deployment with CloudFront** (Everything + Global CDN)
+
+```bash
+chmod +x deploy.sh
+./deploy.sh --full-cloudfront
+```
+
+**Option B: Full Deployment** (Infrastructure + CI/CD + Data Pipeline)
 
 ```bash
 chmod +x deploy.sh
 ./deploy.sh --full
 ```
 
-This deploys:
-1. ✅ **Main Infrastructure** (Lambda, API Gateway, S3, DynamoDB)
-2. ✅ **CI/CD Pipeline** (Optional - with GitHub integration)
-3. ✅ **Data Pipeline** (Glue, Step Functions, EventBridge)
-4. ✅ **Lambda Functions** (Training, Inference, Registry)
-5. ✅ **Frontend Build** (React production bundle)
+**Option C: Infrastructure with CloudFront** (Core + CDN)
 
-**Option B: Infrastructure Only** (Simpler, faster)
+```bash
+chmod +x deploy.sh
+./deploy.sh --cloudfront
+```
+
+**Option D: Infrastructure Only** (Simpler, fastest)
 
 ```bash
 chmod +x deploy.sh
 ./deploy.sh
 ```
 
-Deploys only the core infrastructure without CI/CD and data pipelines.
+**Option E: CloudFront Only** (Add CDN to existing deployment)
+
+```bash
+chmod +x deploy-cloudfront.sh
+./deploy-cloudfront.sh
+```
 
 ### Manual Deployment
 
@@ -143,7 +159,13 @@ See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed step-by-step instructions.
 
 ### Access the UI
 
-After deployment, open `frontend/build/index.html` in your browser or deploy to S3:
+**With CloudFront:**
+```
+https://d1234567890123.cloudfront.net
+```
+
+**Without CloudFront:**
+Open `frontend/build/index.html` in your browser or:
 
 ```bash
 aws s3 sync frontend/build/ s3://your-frontend-bucket/ --acl public-read

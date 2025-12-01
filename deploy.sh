@@ -5,12 +5,22 @@
 #   --full: Deploy everything (infrastructure + CI/CD + data pipeline)
 #   (default): Deploy infrastructure only
 
-set -e
+set -euo pipefail  # Strict error handling
+
+# Security: Check for required tools
+command -v aws >/dev/null 2>&1 || { echo "AWS CLI is required but not installed. Aborting." >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "jq is required but not installed. Aborting." >&2; exit 1; }
 
 # Parse arguments
 FULL_DEPLOYMENT=false
+USE_CLOUDFRONT=false
 if [ "$1" = "--full" ]; then
     FULL_DEPLOYMENT=true
+elif [ "$1" = "--cloudfront" ]; then
+    USE_CLOUDFRONT=true
+elif [ "$1" = "--full-cloudfront" ]; then
+    FULL_DEPLOYMENT=true
+    USE_CLOUDFRONT=true
 fi
 
 # Configuration
@@ -18,7 +28,7 @@ STACK_NAME_BASE="mlops-platform"
 ENVIRONMENT="dev"
 REGION="us-east-1"
 
-# Get AWS Account ID
+# Get AWS Account ID and validate credentials
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
 if [ $? -ne 0 ]; then
     echo "Error: Unable to get AWS identity. Please configure AWS CLI first."
@@ -26,10 +36,27 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Validate AWS account ID format
+if [[ ! "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
+    echo "Error: Invalid AWS Account ID format: $AWS_ACCOUNT_ID"
+    exit 1
+fi
+
+# Security: Validate region
+if [[ ! "$REGION" =~ ^[a-z]{2}-[a-z]+-[0-9]$ ]]; then
+    echo "Error: Invalid AWS region format: $REGION"
+    exit 1
+fi
+
 echo "========================================="
-if [ "$FULL_DEPLOYMENT" = true ]; then
+if [ "$FULL_DEPLOYMENT" = true ] && [ "$USE_CLOUDFRONT" = true ]; then
+    echo "Complete MLOps Platform Deployment with CloudFront"
+    echo "AWS Well-Architected Framework Compliant"
+elif [ "$FULL_DEPLOYMENT" = true ]; then
     echo "Complete MLOps Platform Deployment"
     echo "AWS Well-Architected Framework Compliant"
+elif [ "$USE_CLOUDFRONT" = true ]; then
+    echo "MLOps Platform Deployment with CloudFront"
 else
     echo "MLOps Platform Deployment (Infrastructure Only)"
 fi
@@ -250,6 +277,7 @@ cd backend/lambda
 zip -q -r training_handler.zip training_handler.py
 zip -q -r inference_handler.zip inference_handler.py
 zip -q -r model_registry_handler.zip model_registry_handler.py
+zip -q -r dashboard_handler.zip dashboard_handler.py
 
 aws lambda update-function-code \
   --function-name ${STACK_NAME_BASE}-training-handler-${ENVIRONMENT} \
@@ -265,6 +293,11 @@ aws lambda update-function-code \
   --function-name ${STACK_NAME_BASE}-model-registry-handler-${ENVIRONMENT} \
   --zip-file fileb://model_registry_handler.zip \
   --region $REGION > /dev/null 2>&1 || echo "  Model registry handler updated"
+
+aws lambda update-function-code \
+  --function-name ${STACK_NAME_BASE}-dashboard-handler-${ENVIRONMENT} \
+  --zip-file fileb://dashboard_handler.zip \
+  --region $REGION > /dev/null 2>&1 || echo "  Dashboard handler updated"
 
 rm -f *.zip
 cd ../..
@@ -398,18 +431,72 @@ echo "📍 Resources:"
 echo "   API: $API_ENDPOINT"
 echo "   Data: $DATA_BUCKET"
 echo "   Models: $MODEL_BUCKET"
+if [ -n "$CLOUDFRONT_URL" ]; then
+    echo "   Frontend: $CLOUDFRONT_URL"
+else
+    echo "   Frontend: frontend/build/index.html (local)"
+fi
 echo ""
 [ -n "$UPLOADED_DATASET" ] && echo "✅ Dataset: $UPLOADED_DATASET" && echo ""
 echo "📄 Details: DEPLOYMENT_INFO.txt"
 echo ""
 echo "🚀 Next Steps:"
 echo "   1. Upload dataset: aws s3 cp dataset.csv s3://${DATA_BUCKET}/datasets/"
-echo "   2. Open UI: frontend/build/index.html"
+if [ -n "$CLOUDFRONT_URL" ]; then
+    echo "   2. Open UI: $CLOUDFRONT_URL"
+else
+    echo "   2. Open UI: frontend/build/index.html"
+fi
 echo "   3. Test API: curl $API_ENDPOINT/models"
 echo ""
-if [ "$FULL_DEPLOYMENT" = false ]; then
-    echo "💡 For full deployment with CI/CD and data pipeline:"
-    echo "   ./deploy.sh --full"
+if [ "$FULL_DEPLOYMENT" = false ] && [ "$USE_CLOUDFRONT" = false ]; then
+    echo "💡 Deployment options:"
+    echo "   ./deploy.sh --full              # Full deployment"
+    echo "   ./deploy.sh --cloudfront       # Add CloudFront"
+    echo "   ./deploy.sh --full-cloudfront  # Full + CloudFront"
     echo ""
 fi
 echo "========================================="
+# Step: Deploy CloudFront (if requested)
+if [ "$USE_CLOUDFRONT" = true ] || [ "$FULL_DEPLOYMENT" = true ]; then
+    STEP_NUM=$( [ "$FULL_DEPLOYMENT" = true ] && echo "8" || echo "5" )
+    echo ""
+    echo "Step $STEP_NUM: Deploying CloudFront distribution..."
+    
+    FRONTEND_BUCKET="${STACK_NAME_BASE}-frontend-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
+    
+    aws cloudformation deploy \
+      --template-file infrastructure/cloudfront-template.yaml \
+      --stack-name ${STACK_NAME_BASE}-cloudfront-${ENVIRONMENT} \
+      --parameters \
+        ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
+        ParameterKey=FrontendBucketName,ParameterValue=$FRONTEND_BUCKET \
+      --region $REGION
+    
+    # Get CloudFront URL
+    CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
+      --stack-name ${STACK_NAME_BASE}-cloudfront-${ENVIRONMENT} \
+      --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' \
+      --output text \
+      --region $REGION)
+    
+    echo "✓ CloudFront deployed: $CLOUDFRONT_URL"
+    
+    # Upload frontend to S3
+    echo "Uploading frontend to S3..."
+    aws s3 sync frontend/build/ s3://${FRONTEND_BUCKET}/ --delete --region $REGION
+    
+    # Invalidate CloudFront cache
+    DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+      --stack-name ${STACK_NAME_BASE}-cloudfront-${ENVIRONMENT} \
+      --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+      --output text \
+      --region $REGION)
+    
+    aws cloudfront create-invalidation \
+      --distribution-id $DISTRIBUTION_ID \
+      --paths "/*" \
+      --region $REGION > /dev/null
+    
+    echo "✓ Frontend deployed to CloudFront"
+fi

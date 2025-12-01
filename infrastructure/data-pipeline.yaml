@@ -1,91 +1,22 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Data Pipeline for MLOps Platform - Glue, Step Functions, EventBridge'
+Description: 'Data Pipeline for MLOps Platform - Glue + Step Functions'
 
 Parameters:
-  ProjectName:
-    Type: String
-    Default: mlops-platform
-  
   Environment:
     Type: String
     Default: dev
+    Description: Environment name
   
   DataBucket:
     Type: String
-    Description: 'S3 bucket for data storage'
+    Description: S3 bucket for data storage
 
 Resources:
-  # Glue Database for Data Catalog
-  GlueDatabase:
-    Type: AWS::Glue::Database
-    Properties:
-      CatalogId: !Ref AWS::AccountId
-      DatabaseInput:
-        Name: !Sub '${ProjectName}_${Environment}_db'
-        Description: 'Database for MLOps platform data catalog'
-
-  # Glue Crawler for Dataset Discovery
-  DatasetCrawler:
-    Type: AWS::Glue::Crawler
-    Properties:
-      Name: !Sub '${ProjectName}-dataset-crawler-${Environment}'
-      Role: !GetAtt GlueServiceRole.Arn
-      DatabaseName: !Ref GlueDatabase
-      Targets:
-        S3Targets:
-          - Path: !Sub 's3://${DataBucket}/datasets/'
-      SchemaChangePolicy:
-        UpdateBehavior: UPDATE_IN_DATABASE
-        DeleteBehavior: LOG
-      Schedule:
-        ScheduleExpression: 'cron(0 2 * * ? *)'  # Daily at 2 AM
-
-  # Glue Job for Data Validation
-  DataValidationJob:
-    Type: AWS::Glue::Job
-    Properties:
-      Name: !Sub '${ProjectName}-data-validation-${Environment}'
-      Role: !GetAtt GlueServiceRole.Arn
-      Command:
-        Name: glueetl
-        ScriptLocation: !Sub 's3://${DataBucket}/glue-scripts/data_validation.py'
-        PythonVersion: '3'
-      DefaultArguments:
-        '--job-language': 'python'
-        '--TempDir': !Sub 's3://${DataBucket}/glue-temp/'
-        '--enable-metrics': 'true'
-        '--enable-continuous-cloudwatch-log': 'true'
-      MaxRetries: 1
-      Timeout: 60
-      GlueVersion: '4.0'
-      NumberOfWorkers: 2
-      WorkerType: G.1X
-
-  # Glue Job for Data Preprocessing
-  DataPreprocessingJob:
-    Type: AWS::Glue::Job
-    Properties:
-      Name: !Sub '${ProjectName}-data-preprocessing-${Environment}'
-      Role: !GetAtt GlueServiceRole.Arn
-      Command:
-        Name: glueetl
-        ScriptLocation: !Sub 's3://${DataBucket}/glue-scripts/data_preprocessing.py'
-        PythonVersion: '3'
-      DefaultArguments:
-        '--job-language': 'python'
-        '--TempDir': !Sub 's3://${DataBucket}/glue-temp/'
-        '--enable-metrics': 'true'
-      MaxRetries: 1
-      Timeout: 120
-      GlueVersion: '4.0'
-      NumberOfWorkers: 5
-      WorkerType: G.1X
-
   # IAM Role for Glue
-  GlueServiceRole:
+  GlueExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectName}-glue-role-${Environment}'
+      RoleName: !Sub 'mlops-glue-role-${Environment}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -96,7 +27,7 @@ Resources:
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole'
       Policies:
-        - PolicyName: GlueS3Access
+        - PolicyName: S3Access
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -104,90 +35,48 @@ Resources:
                 Action:
                   - 's3:GetObject'
                   - 's3:PutObject'
-                  - 's3:DeleteObject'
                   - 's3:ListBucket'
                 Resource:
                   - !Sub 'arn:aws:s3:::${DataBucket}'
                   - !Sub 'arn:aws:s3:::${DataBucket}/*'
 
-  # Step Functions State Machine for Data Pipeline
-  DataPipelineStateMachine:
-    Type: AWS::StepFunctions::StateMachine
+  # Glue Job for Data Validation
+  DataValidationJob:
+    Type: AWS::Glue::Job
     Properties:
-      StateMachineName: !Sub '${ProjectName}-data-pipeline-${Environment}'
-      RoleArn: !GetAtt StepFunctionsRole.Arn
-      DefinitionString: !Sub |
-        {
-          "Comment": "Data Pipeline for MLOps Platform",
-          "StartAt": "ValidateDataset",
-          "States": {
-            "ValidateDataset": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::glue:startJobRun.sync",
-              "Parameters": {
-                "JobName": "${DataValidationJob}"
-              },
-              "Next": "CheckValidation",
-              "Catch": [{
-                "ErrorEquals": ["States.ALL"],
-                "Next": "ValidationFailed"
-              }]
-            },
-            "CheckValidation": {
-              "Type": "Choice",
-              "Choices": [{
-                "Variable": "$.JobRunState",
-                "StringEquals": "SUCCEEDED",
-                "Next": "PreprocessData"
-              }],
-              "Default": "ValidationFailed"
-            },
-            "PreprocessData": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::glue:startJobRun.sync",
-              "Parameters": {
-                "JobName": "${DataPreprocessingJob}"
-              },
-              "Next": "TriggerTraining",
-              "Catch": [{
-                "ErrorEquals": ["States.ALL"],
-                "Next": "PreprocessingFailed"
-              }]
-            },
-            "TriggerTraining": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::lambda:invoke",
-              "Parameters": {
-                "FunctionName": "mlops-platform-training-handler-${Environment}",
-                "Payload": {
-                  "datasetUri.$": "$.PreprocessedDataUri",
-                  "modelName": "medication-adherence-model",
-                  "algorithm": "RandomForest"
-                }
-              },
-              "Next": "TrainingComplete"
-            },
-            "TrainingComplete": {
-              "Type": "Succeed"
-            },
-            "ValidationFailed": {
-              "Type": "Fail",
-              "Error": "DataValidationError",
-              "Cause": "Data validation failed"
-            },
-            "PreprocessingFailed": {
-              "Type": "Fail",
-              "Error": "DataPreprocessingError",
-              "Cause": "Data preprocessing failed"
-            }
-          }
-        }
+      Name: !Sub 'mlops-data-validation-${Environment}'
+      Role: !GetAtt GlueExecutionRole.Arn
+      Command:
+        Name: pythonshell
+        PythonVersion: '3.9'
+        ScriptLocation: !Sub 's3://${DataBucket}/glue-scripts/data_validation.py'
+      DefaultArguments:
+        '--job-language': 'python'
+        '--data-bucket': !Ref DataBucket
+      MaxRetries: 1
+      Timeout: 60
+
+  # Glue Job for Data Preprocessing
+  DataPreprocessingJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub 'mlops-data-preprocessing-${Environment}'
+      Role: !GetAtt GlueExecutionRole.Arn
+      Command:
+        Name: glueetl
+        PythonVersion: '3'
+        ScriptLocation: !Sub 's3://${DataBucket}/glue-scripts/data_preprocessing.py'
+      DefaultArguments:
+        '--job-language': 'python'
+        '--data-bucket': !Ref DataBucket
+      MaxRetries: 1
+      Timeout: 120
 
   # IAM Role for Step Functions
   StepFunctionsRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectName}-stepfunctions-role-${Environment}'
+      RoleName: !Sub 'mlops-stepfunctions-role-${Environment}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -196,7 +85,7 @@ Resources:
               Service: states.amazonaws.com
             Action: 'sts:AssumeRole'
       Policies:
-        - PolicyName: StepFunctionsPolicy
+        - PolicyName: GlueAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -204,105 +93,90 @@ Resources:
                 Action:
                   - 'glue:StartJobRun'
                   - 'glue:GetJobRun'
-                  - 'glue:GetJobRuns'
                   - 'glue:BatchStopJobRun'
                 Resource: '*'
-              - Effect: Allow
-                Action:
-                  - 'lambda:InvokeFunction'
-                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:mlops-platform-*'
-              - Effect: Allow
-                Action:
-                  - 'sns:Publish'
-                Resource: !Ref DataPipelineNotificationTopic
 
-  # SNS Topic for Pipeline Notifications
-  DataPipelineNotificationTopic:
-    Type: AWS::SNS::Topic
+  # Step Functions State Machine
+  DataPipelineStateMachine:
+    Type: AWS::StepFunctions::StateMachine
     Properties:
-      TopicName: !Sub '${ProjectName}-data-pipeline-notifications-${Environment}'
-      DisplayName: 'MLOps Data Pipeline Notifications'
+      StateMachineName: !Sub 'mlops-data-pipeline-${Environment}'
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "MLOps Data Pipeline",
+          "StartAt": "DataValidation",
+          "States": {
+            "DataValidation": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "${DataValidationJob}"
+              },
+              "Next": "DataPreprocessing",
+              "Catch": [{
+                "ErrorEquals": ["States.TaskFailed"],
+                "Next": "ValidationFailed"
+              }]
+            },
+            "DataPreprocessing": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "${DataPreprocessingJob}"
+              },
+              "Next": "PipelineComplete",
+              "Catch": [{
+                "ErrorEquals": ["States.TaskFailed"],
+                "Next": "PreprocessingFailed"
+              }]
+            },
+            "PipelineComplete": {
+              "Type": "Succeed"
+            },
+            "ValidationFailed": {
+              "Type": "Fail",
+              "Cause": "Data validation failed"
+            },
+            "PreprocessingFailed": {
+              "Type": "Fail",
+              "Cause": "Data preprocessing failed"
+            }
+          }
+        }
 
-  # EventBridge Rule to trigger data pipeline on new data
-  NewDataTriggerRule:
+  # EventBridge Rule for automated triggers
+  DataPipelineTrigger:
     Type: AWS::Events::Rule
     Properties:
-      Name: !Sub '${ProjectName}-new-data-trigger-${Environment}'
-      Description: 'Trigger data pipeline when new data arrives'
+      Name: !Sub 'mlops-data-pipeline-trigger-${Environment}'
+      Description: 'Trigger data pipeline on S3 uploads'
       EventPattern:
-        source:
-          - aws.s3
-        detail-type:
-          - 'Object Created'
+        source: ['aws.s3']
+        detail-type: ['Object Created']
         detail:
           bucket:
-            name:
-              - !Ref DataBucket
+            name: [!Ref DataBucket]
           object:
             key:
-              - prefix: 'raw-data/'
+              - prefix: 'datasets/'
       State: ENABLED
       Targets:
         - Arn: !GetAtt DataPipelineStateMachine.Arn
-          RoleArn: !GetAtt EventBridgeStepFunctionsRole.Arn
-          Id: DataPipelineTarget
-
-  # IAM Role for EventBridge to invoke Step Functions
-  EventBridgeStepFunctionsRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: events.amazonaws.com
-            Action: 'sts:AssumeRole'
-      Policies:
-        - PolicyName: StartStateMachinePolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: 'states:StartExecution'
-                Resource: !GetAtt DataPipelineStateMachine.Arn
-
-  # CloudWatch Alarm for Pipeline Failures
-  PipelineFailureAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub '${ProjectName}-data-pipeline-failures-${Environment}'
-      AlarmDescription: 'Alert when data pipeline fails'
-      MetricName: ExecutionsFailed
-      Namespace: AWS/States
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 1
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      Dimensions:
-        - Name: StateMachineArn
-          Value: !Ref DataPipelineStateMachine
-      AlarmActions:
-        - !Ref DataPipelineNotificationTopic
+          Id: 'DataPipelineTarget'
+          RoleArn: !GetAtt StepFunctionsRole.Arn
 
 Outputs:
-  GlueDatabaseName:
-    Description: 'Glue database name'
-    Value: !Ref GlueDatabase
-  
   DataPipelineStateMachineArn:
-    Description: 'ARN of the data pipeline state machine'
+    Description: Data Pipeline State Machine ARN
     Value: !Ref DataPipelineStateMachine
-  
-  NotificationTopicArn:
-    Description: 'SNS topic for pipeline notifications'
-    Value: !Ref DataPipelineNotificationTopic
-  
+    Export:
+      Name: !Sub 'mlops-data-pipeline-arn-${Environment}'
+
   DataValidationJobName:
-    Description: 'Name of the data validation Glue job'
+    Description: Glue Data Validation Job Name
     Value: !Ref DataValidationJob
-  
+
   DataPreprocessingJobName:
-    Description: 'Name of the data preprocessing Glue job'
+    Description: Glue Data Preprocessing Job Name
     Value: !Ref DataPreprocessingJob
