@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# Fix MLOps Platform Deployment - Update stack and deploy CloudFront
-
 set -euo pipefail
 
 STACK_NAME="mlops-platform-dev"
@@ -14,11 +12,8 @@ FRONTEND_BUCKET="mlops-platform-frontend-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
 echo "=========================================="
 echo "Fixing MLOps Platform Deployment"
 echo "=========================================="
-echo "Stack: $STACK_NAME"
-echo "Region: $REGION"
-echo ""
 
-# Step 1: Update Stack (if needed)
+# Step 1: Update Stack (skip if no changes)
 echo "Step 1: Checking CloudFormation stack..."
 UPDATE_OUTPUT=$(aws cloudformation update-stack \
   --stack-name $STACK_NAME \
@@ -30,18 +25,16 @@ UPDATE_OUTPUT=$(aws cloudformation update-stack \
   --region $REGION 2>&1 || true)
 
 if echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
-    echo "✓ Stack is up to date (no changes needed)"
+    echo "✓ Stack is up to date"
 elif echo "$UPDATE_OUTPUT" | grep -q "StackId"; then
     echo "Waiting for stack update..."
     aws cloudformation wait stack-update-complete \
       --stack-name $STACK_NAME \
       --region $REGION 2>/dev/null || true
     echo "✓ Stack updated"
-else
-    echo "✓ Stack verified"
-fi"
+fi
 
-# Step 2: Get API Endpoint
+# Get API Endpoint
 API_ENDPOINT=$(aws cloudformation describe-stacks \
   --stack-name $STACK_NAME \
   --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
@@ -89,7 +82,6 @@ echo "✓ Lambda functions deployed"
 echo ""
 echo "Step 3: Deploying CloudFront distribution..."
 
-# Create frontend bucket if needed
 aws s3api head-bucket --bucket $FRONTEND_BUCKET --region $REGION 2>/dev/null || \
   aws s3 mb s3://$FRONTEND_BUCKET --region $REGION
 
@@ -109,21 +101,18 @@ CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
 
 echo "✓ CloudFront deployed: $CLOUDFRONT_URL"
 
-# Step 4: Upload Frontend
+# Step 4: Build and Upload Frontend
 echo ""
 echo "Step 4: Uploading frontend to S3..."
 
-# Build frontend
 cd frontend
 echo "REACT_APP_API_URL=$API_ENDPOINT" > .env
 npm install --silent 2>/dev/null || npm install
 npm run build 2>/dev/null || echo "Build completed"
 cd ..
 
-# Upload to S3
 aws s3 sync frontend/build/ s3://${FRONTEND_BUCKET}/ --delete --region $REGION
 
-# Invalidate CloudFront
 DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
   --stack-name mlops-platform-cloudfront-${ENVIRONMENT} \
   --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
@@ -140,8 +129,6 @@ echo "✓ Frontend deployed to CloudFront"
 # Step 5: Verify API
 echo ""
 echo "Step 5: Verifying API endpoints..."
-
-echo "Testing GET /models..."
 RESPONSE=$(curl -s -w "\n%{http_code}" "$API_ENDPOINT/models")
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | head -n-1)
@@ -150,12 +137,11 @@ if [ "$HTTP_CODE" = "200" ]; then
     echo "✓ API working: $BODY"
 else
     echo "⚠ API returned HTTP $HTTP_CODE"
-    echo "Response: $BODY"
 fi
 
 echo ""
 echo "=========================================="
-echo "✅ Deployment Fixed!"
+echo "✅ Deployment Complete!"
 echo "=========================================="
 echo ""
 echo "📍 Resources:"
