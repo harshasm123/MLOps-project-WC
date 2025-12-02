@@ -8,16 +8,6 @@ Parameters:
 
   FrontendBucketName:
     Type: String
-    Default: ''
-    Description: (Optional) S3 bucket name for frontend assets. If empty, `FrontendBucketArn` must be provided.
-
-  FrontendBucketArn:
-    Type: String
-    Default: ''
-    Description: (Optional) ARN of the S3 bucket (e.g. arn:aws:s3:::bucket-name). If provided, bucket name will be derived from this ARN.
-
-Conditions:
-  UseBucketArn: !Not [ !Equals [ !Ref FrontendBucketArn, '' ] ]
 
 Resources:
   OriginAccessControl:
@@ -35,34 +25,18 @@ Resources:
       DistributionConfig:
         Origins:
           - Id: S3Origin
-            DomainName:
-              Fn::If:
-                - UseBucketArn
-                - Fn::Join:
-                    - ''
-                    - - Fn::Select:
-                        - 5
-                        - Fn::Split:
-                            - ':'
-                            - !Ref FrontendBucketArn
-                      - !Sub ".s3.${AWS::Region}.amazonaws.com"
-                - !Sub '${FrontendBucketName}.s3.${AWS::Region}.amazonaws.com'
+            DomainName: !Sub '${FrontendBucketName}.s3.${AWS::Region}.amazonaws.com'
             OriginAccessControlId: !GetAtt OriginAccessControl.Id
-            S3OriginConfig: {}
         Enabled: true
         DefaultRootObject: index.html
         DefaultCacheBehavior:
           AllowedMethods:
             - GET
             - HEAD
-            - OPTIONS
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
           ForwardedValues:
             QueryString: false
-            Cookies:
-              Forward: none
-          TrustedSigners: []
           Compress: true
         CustomErrorResponses:
           - ErrorCode: 403
@@ -77,37 +51,19 @@ Resources:
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
-      Bucket: !If
-        - UseBucketArn
-        - Fn::Select:
-            - 5
-            - Fn::Split:
-                - ':'
-                - !Ref FrontendBucketArn
-        - !Ref FrontendBucketName
+      Bucket: !Ref FrontendBucketName
       PolicyDocument:
+        Version: '2012-10-17'
         Statement:
           - Sid: AllowCloudFrontOAC
             Effect: Allow
             Principal:
               Service: cloudfront.amazonaws.com
             Action: 's3:GetObject'
-            Resource:
-              Fn::If:
-                - UseBucketArn
-                - Fn::Join:
-                    - ''
-                    - - 'arn:aws:s3:::'
-                      - Fn::Select:
-                          - 5
-                          - Fn::Split:
-                              - ':'
-                              - !Ref FrontendBucketArn
-                      - '/*'
-                - !Sub 'arn:aws:s3:::${FrontendBucketName}/*'
+            Resource: !Sub 'arn:aws:s3:::${FrontendBucketName}/*'
             Condition:
               StringEquals:
-                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution.Id}'
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
 
 Outputs:
   CloudFrontDistributionId:
