@@ -50,14 +50,12 @@ Resources:
                 - UseBucketArn
                 - Fn::Join:
                     - ''
-                    - - Fn::Select
-                      - - 5
-                        - Fn::Split
-                          - ':'
-                          - !Ref FrontendBucketArn
-                      - ".s3."
-                      - Ref: AWS::Region
-                      - ".amazonaws.com"
+                    - - Fn::Select:
+                        - 5
+                        - Fn::Split:
+                            - ':'
+                            - !Ref FrontendBucketArn
+                      - !Sub ".s3.${AWS::Region}.amazonaws.com"
                 - !Sub '${FrontendBucketName}.s3.${AWS::Region}.amazonaws.com'
             OriginAccessControlId: !GetAtt OriginAccessControl.Id
         Enabled: true
