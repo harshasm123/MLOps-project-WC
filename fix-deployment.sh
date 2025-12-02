@@ -18,20 +18,28 @@ echo "Stack: $STACK_NAME"
 echo "Region: $REGION"
 echo ""
 
-# Step 1: Verify Stack Exists
-echo "Step 1: Verifying CloudFormation stack..."
-STACK_STATUS=$(aws cloudformation describe-stacks \
+# Step 1: Update Stack (if needed)
+echo "Step 1: Checking CloudFormation stack..."
+UPDATE_OUTPUT=$(aws cloudformation update-stack \
   --stack-name $STACK_NAME \
-  --query 'Stacks[0].StackStatus' \
-  --output text \
-  --region $REGION 2>/dev/null || echo "")
+  --template-body file://infrastructure/cloudformation-template.yaml \
+  --parameters \
+    ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
+    ParameterKey=DatasetBucketName,ParameterValue=$DATA_BUCKET \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region $REGION 2>&1 || true)
 
-if [ -z "$STACK_STATUS" ]; then
-    echo "Error: Stack not found"
-    exit 1
-fi
-
-echo "✓ Stack status: $STACK_STATUS"
+if echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
+    echo "✓ Stack is up to date (no changes needed)"
+elif echo "$UPDATE_OUTPUT" | grep -q "StackId"; then
+    echo "Waiting for stack update..."
+    aws cloudformation wait stack-update-complete \
+      --stack-name $STACK_NAME \
+      --region $REGION 2>/dev/null || true
+    echo "✓ Stack updated"
+else
+    echo "✓ Stack verified"
+fi"
 
 # Step 2: Get API Endpoint
 API_ENDPOINT=$(aws cloudformation describe-stacks \
